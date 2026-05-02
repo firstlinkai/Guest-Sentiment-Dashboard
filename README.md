@@ -1,4 +1,4 @@
-# 📊 RRE-AUTO-04 | Guest Sentiment Dashboard
+# 📊 Guest Sentiment Dashboard
 
 > An automated AI-powered sentiment analysis system that aggregates guest feedback from Facebook, Instagram, and Google Reviews — then delivers weekly business intelligence directly to the resort owner via Telegram.
 
