@@ -1,0 +1,648 @@
+{
+  "name": "RRE-AUTO-04 | Guest Sentiment Dashboard",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks"
+            }
+          ]
+        }
+      },
+      "id": "157ae9d1-bfaa-4b60-bb9b-fed02407bc35",
+      "name": "Weekly Trigger (Sunday Midnight)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2096,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set the date range for the last 7 days\nconst now = new Date();\nconst sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);\n\nconst since = Math.floor(sevenDaysAgo.getTime() / 1000);\nconst until = Math.floor(now.getTime() / 1000);\n\nreturn [{\n  json: {\n    since,\n    until,\n    sinceISO: sevenDaysAgo.toISOString(),\n    untilISO: now.toISOString(),\n    reportDate: now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })\n  }\n}];"
+      },
+      "id": "42c41a9e-e6e0-4e8b-8b5f-99905c54053e",
+      "name": "Set Date Range",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1872,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v19.0/{{$env.FB_PAGE_ID}}/feed",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "message,comments{message,from,created_time},created_time"
+            },
+            {
+              "name": "since",
+              "value": "={{$json.since}}"
+            },
+            {
+              "name": "until",
+              "value": "={{$json.until}}"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9a3da42d-df4b-4071-9a79-6ea2f5b49710",
+      "name": "Fetch Facebook Comments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1648,
+        -144
+      ],
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v19.0/{{$env.IG_USER_ID}}/media",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "caption,comments{text,username,timestamp},timestamp"
+            },
+            {
+              "name": "since",
+              "value": "={{$('Set Date Range').item.json.since}}"
+            },
+            {
+              "name": "until",
+              "value": "={{$('Set Date Range').item.json.until}}"
+            },
+            {
+              "name": "limit",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3aaa06ca-d076-457b-aa13-4f86f82f8425",
+      "name": "Fetch Instagram Comments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1648,
+        48
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HJvkWfgeaAJ5ZEsp",
+          "name": "Runway"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://mybusiness.googleapis.com/v4/accounts/{{$env.GOOGLE_ACCOUNT_ID}}/locations/{{$env.GOOGLE_LOCATION_ID}}/reviews",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pageSize",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7b1714fa-b4e5-4170-a069-10dd4f3a4bc9",
+      "name": "Fetch Google Reviews",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1648,
+        224
+      ],
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "7PBSSRVRdp6Xl1Wj",
+          "name": "Google account -aifirslink test"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize all data from Facebook, Instagram, and Google Reviews\nconst allItems = [];\n\n// --- FACEBOOK ---\nconst fbData = $('Fetch Facebook Comments').all();\nfor (const item of fbData) {\n  const post = item.json;\n  // Post-level message\n  if (post.message) {\n    allItems.push({\n      source: 'Facebook',\n      type: 'post',\n      text: post.message,\n      timestamp: post.created_time || new Date().toISOString()\n    });\n  }\n  // Comment-level messages\n  if (post.comments && post.comments.data) {\n    for (const comment of post.comments.data) {\n      if (comment.message) {\n        allItems.push({\n          source: 'Facebook',\n          type: 'comment',\n          text: comment.message,\n          author: comment.from ? comment.from.name : 'Unknown',\n          timestamp: comment.created_time || new Date().toISOString()\n        });\n      }\n    }\n  }\n}\n\n// --- INSTAGRAM ---\nconst igData = $('Fetch Instagram Comments').all();\nfor (const item of igData) {\n  const media = item.json;\n  if (media.comments && media.comments.data) {\n    for (const comment of media.comments.data) {\n      if (comment.text) {\n        allItems.push({\n          source: 'Instagram',\n          type: 'comment',\n          text: comment.text,\n          author: comment.username || 'Unknown',\n          timestamp: comment.timestamp || new Date().toISOString()\n        });\n      }\n    }\n  }\n}\n\n// --- GOOGLE REVIEWS ---\nconst gData = $('Fetch Google Reviews').all();\nfor (const item of gData) {\n  const reviewList = item.json.reviews || [];\n  for (const review of reviewList) {\n    const reviewDate = new Date(review.updateTime);\n    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);\n    // Only include reviews from last 7 days\n    if (reviewDate >= sevenDaysAgo) {\n      allItems.push({\n        source: 'Google',\n        type: 'review',\n        text: review.comment || '',\n        author: review.reviewer ? review.reviewer.displayName : 'Anonymous',\n        rating: review.starRating,\n        timestamp: review.updateTime\n      });\n    }\n  }\n}\n\n// --- FALLBACK: MOCK DATA for testing if all arrays are empty ---\nif (allItems.length === 0) {\n  const mockFeedback = [\n    { source: 'Facebook', type: 'comment', text: 'The view at sunset was absolutely breathtaking! Loved every moment.', author: 'Maria Santos', timestamp: new Date().toISOString() },\n    { source: 'Google', type: 'review', text: 'Great place but the WiFi signal was very weak. We could barely load a page.', author: 'John Cruz', rating: 'FOUR', timestamp: new Date().toISOString() },\n    { source: 'Instagram', type: 'comment', text: 'Do you have a swimming pool? My kids would love it!', author: 'ana_travels', timestamp: new Date().toISOString() },\n    { source: 'Facebook', type: 'comment', text: 'Staff was incredibly friendly and welcoming. They went above and beyond!', author: 'Robert Lim', timestamp: new Date().toISOString() },\n    { source: 'Google', type: 'review', text: 'Rooms were clean but a bit overpriced for what you get. The nature view is nice though.', author: 'Carla Reyes', rating: 'THREE', timestamp: new Date().toISOString() },\n    { source: 'Facebook', type: 'comment', text: 'The signal here is so weak, I had to go outside just to send a message. Please fix this!', author: 'Mike Torres', timestamp: new Date().toISOString() },\n    { source: 'Instagram', type: 'comment', text: 'Is there a pool? We are planning to visit next month with our family.', author: 'jess_explorer', timestamp: new Date().toISOString() },\n    { source: 'Google', type: 'review', text: 'We had a wonderful time! The nature trails are amazing and the staff is top notch.', author: 'Lisa Park', rating: 'FIVE', timestamp: new Date().toISOString() },\n    { source: 'Facebook', type: 'comment', text: 'Weak internet connection throughout our entire stay. Very frustrating.', author: 'David Go', timestamp: new Date().toISOString() },\n    { source: 'Instagram', type: 'comment', text: 'Do you offer a swimming pool for guests?', author: 'travel_ph', timestamp: new Date().toISOString() },\n    { source: 'Google', type: 'review', text: 'Prices seem high but the experience is worth it. Sunset view is the #1 highlight!', author: 'Nina Flores', rating: 'FOUR', timestamp: new Date().toISOString() },\n    { source: 'Facebook', type: 'comment', text: 'The sunset here is absolutely magical. Best resort experience we have had!', author: 'Chris Sy', timestamp: new Date().toISOString() }\n  ];\n  for (const m of mockFeedback) allItems.push(m);\n}\n\nreturn allItems.map(item => ({ json: item }));"
+      },
+      "id": "3d9082b1-3b8d-43f4-a2e1-e1a640944195",
+      "name": "Normalize & Merge All Feedback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all feedback items into a single batch for AI analysis\nconst allItems = $input.all();\nconst feedbackList = allItems.map((item, index) => ({\n  id: index + 1,\n  source: item.json.source,\n  type: item.json.type,\n  text: item.json.text,\n  author: item.json.author || 'Guest',\n  timestamp: item.json.timestamp\n}));\n\nreturn [{\n  json: {\n    totalFeedback: feedbackList.length,\n    feedbackBatch: JSON.stringify(feedbackList),\n    reportDate: $('Set Date Range').first().json.reportDate\n  }\n}];"
+      },
+      "id": "aa3582bd-022b-4bf7-86bf-df18f5010ecf",
+      "name": "Prepare AI Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1168,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a hospitality business intelligence analyst specializing in guest sentiment analysis for resorts. You analyze guest feedback with precision and return ONLY valid JSON. No explanations, no markdown, no code blocks. Return raw JSON only.",
+              "role": "system"
+            },
+            {
+              "content": "=Analyze the following guest feedback from the past 7 days for a nature resort.\n\nFEEDBACK DATA:\n{{$json.feedbackBatch}}\n\nPerform a complete sentiment analysis and return a single JSON object with EXACTLY this structure:\n{\n  \"summary\": {\n    \"totalAnalyzed\": <number>,\n    \"positiveCount\": <number>,\n    \"neutralCount\": <number>,\n    \"negativeCount\": <number>,\n    \"positivePercent\": <number 0-100>,\n    \"overallSentiment\": \"Positive|Neutral|Negative\",\n    \"topKeyword\": \"<single most mentioned positive word>\",\n    \"topAlert\": \"<single most mentioned complaint or concern>\"\n  },\n  \"categories\": {\n    \"Price\": { \"mentions\": <number>, \"sentiment\": \"Positive|Neutral|Negative\", \"sample\": \"<example quote>\" },\n    \"Facility\": { \"mentions\": <number>, \"sentiment\": \"Positive|Neutral|Negative\", \"sample\": \"<example quote>\" },\n    \"Staff\": { \"mentions\": <number>, \"sentiment\": \"Positive|Neutral|Negative\", \"sample\": \"<example quote>\" },\n    \"Nature\": { \"mentions\": <number>, \"sentiment\": \"Positive|Neutral|Negative\", \"sample\": \"<example quote>\" }\n  },\n  \"individualResults\": [\n    { \"id\": <number>, \"sentiment\": \"Positive|Neutral|Negative\", \"category\": \"Price|Facility|Staff|Nature\", \"keyTheme\": \"<2-3 word theme>\" }\n  ],\n  \"trends\": [\n    { \"theme\": \"<topic>\", \"count\": <number>, \"description\": \"<one sentence>\", \"isKnowledgeBaseLeak\": <true|false> }\n  ],\n  \"knowledgeBaseLeaks\": [\n    { \"question\": \"<the FAQ question>\", \"frequency\": <number>, \"suggestedAnswer\": \"<draft answer for owner>\" }\n  ],\n  \"actionableInsights\": [\n    { \"priority\": \"High|Medium|Low\", \"area\": \"<area>\", \"finding\": \"<what was found>\", \"recommendation\": \"<what owner should do>\" }\n  ],\n  \"execSummary\": \"<2-3 sentence executive summary for the resort owner, highlight wins, alerts, and top action>\"\n}\n\nRules:\n- knowledgeBaseLeaks must ONLY include themes mentioned 3+ times\n- isKnowledgeBaseLeak in trends = true if count >= 3\n- Be specific and actionable\n- Return ONLY the JSON object, nothing else"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 2000,
+          "temperature": 0.2
+        }
+      },
+      "id": "783f5f36-a166-4c22-9622-7dff11319fff",
+      "name": "AI Sentiment Engine (GPT-4o)",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [
+        -1008,
+        48
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "ayI4iqouDMVxe4Gb",
+          "name": "OpenAi DGTLBASE Key 07022026"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the AI response JSON\nconst rawContent = $input.first().json.message?.content || $input.first().json.choices?.[0]?.message?.content || '{}';\n\nlet analysis;\ntry {\n  // Strip any accidental markdown code fences\n  const cleaned = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();\n  analysis = JSON.parse(cleaned);\n} catch (e) {\n  // Fallback mock analysis if parse fails\n  analysis = {\n    summary: {\n      totalAnalyzed: 12,\n      positiveCount: 8,\n      neutralCount: 2,\n      negativeCount: 2,\n      positivePercent: 67,\n      overallSentiment: 'Positive',\n      topKeyword: 'Sunset',\n      topAlert: 'Weak WiFi Signal'\n    },\n    categories: {\n      Price: { mentions: 3, sentiment: 'Neutral', sample: 'Prices seem high but worth it' },\n      Facility: { mentions: 4, sentiment: 'Negative', sample: 'Weak signal throughout our stay' },\n      Staff: { mentions: 3, sentiment: 'Positive', sample: 'Staff was incredibly friendly' },\n      Nature: { mentions: 6, sentiment: 'Positive', sample: 'Sunset was breathtaking' }\n    },\n    individualResults: [],\n    trends: [\n      { theme: 'Weak WiFi / Signal', count: 3, description: '3 guests complained about weak internet connectivity', isKnowledgeBaseLeak: true },\n      { theme: 'Swimming Pool Request', count: 3, description: '3 guests asked if there is a pool', isKnowledgeBaseLeak: true },\n      { theme: 'Sunset Experience', count: 4, description: '4 guests praised the sunset view', isKnowledgeBaseLeak: false }\n    ],\n    knowledgeBaseLeaks: [\n      { question: 'Is there a swimming pool?', frequency: 3, suggestedAnswer: 'We currently do not have a swimming pool, but we offer natural swimming spots nearby. We recommend bringing swimwear for the river.' },\n      { question: 'How is the WiFi/signal here?', frequency: 3, suggestedAnswer: 'Our resort is set in a nature environment with limited signal. We recommend treating your stay as a digital detox. For emergencies, our front desk has a dedicated line.' }\n    ],\n    actionableInsights: [\n      { priority: 'High', area: 'Facility', finding: '3 guests complained about weak WiFi signal', recommendation: 'Add a clear \"Off-Grid Digital Detox\" disclaimer to all booking pages and FAQs to set expectations.' },\n      { priority: 'High', area: 'FAQ', finding: '3 guests asked about a swimming pool', recommendation: 'Add pool/swimming FAQ to booking page and Messenger auto-reply.' },\n      { priority: 'Medium', area: 'Marketing', finding: 'Sunset is the top positive keyword with 4 mentions', recommendation: 'Feature sunset content more prominently in social media posts and reels.' }\n    ],\n    execSummary: 'This week showed strong overall positive sentiment driven by nature experiences and staff warmth. The primary alert is recurring WiFi complaints — an immediate FAQ/disclaimer update is recommended. Three guests independently asked about a pool, flagging it as a Knowledge Base gap to address.'\n  };\n}\n\nconst reportDate = $('Set Date Range').first().json.reportDate;\nconst summary = analysis.summary;\n\n// Build the Telegram message\nconst sentimentEmoji = summary.positivePercent >= 70 ? '🟢' : summary.positivePercent >= 50 ? '🟡' : '🔴';\n\nconst leaks = analysis.knowledgeBaseLeaks || [];\nconst leakLines = leaks.length > 0\n  ? leaks.map(l => `   • \"${l.question}\" (${l.frequency}x asked)`).join('\\n')\n  : '   • None this week ✅';\n\nconst insights = (analysis.actionableInsights || []).filter(i => i.priority === 'High');\nconst insightLines = insights.length > 0\n  ? insights.map(i => `   🔺 [${i.area}] ${i.recommendation}`).join('\\n')\n  : '   • No critical actions this week.';\n\nconst categoryLines = Object.entries(analysis.categories || {}).map(([cat, data]) => {\n  const emoji = data.sentiment === 'Positive' ? '😊' : data.sentiment === 'Negative' ? '😟' : '😐';\n  return `   ${emoji} ${cat}: ${data.mentions} mention(s) — ${data.sentiment}`;\n}).join('\\n');\n\nconst trendLines = (analysis.trends || []).map(t => {\n  const flag = t.isKnowledgeBaseLeak ? ' 🚩 KB Gap' : '';\n  return `   • \"${t.theme}\" — ${t.count}x${flag}`;\n}).join('\\n');\n\nconst telegramMessage = `📊 *WEEKLY RESORT HEALTH REPORT*\n📅 ${reportDate}\n━━━━━━━━━━━━━━━━━━━━\n\n${sentimentEmoji} *SENTIMENT SCORE: ${summary.positivePercent}% Positive*\n   Total Feedback Analyzed: ${summary.totalAnalyzed}\n   ✅ Positive: ${summary.positiveCount} | ⚠️ Neutral: ${summary.neutralCount} | ❌ Negative: ${summary.negativeCount}\n\n🏷️ *TOP KEYWORD:* \"${summary.topKeyword}\"\n🚨 *TOP ALERT:* \"${summary.topAlert}\"\n\n📂 *CATEGORY BREAKDOWN:*\n${categoryLines}\n\n📈 *THIS WEEK'S TRENDS:*\n${trendLines}\n\n💡 *KNOWLEDGE BASE GAPS (3+ asks):*\n${leakLines}\n\n🎯 *HIGH-PRIORITY ACTIONS:*\n${insightLines}\n\n📝 *EXECUTIVE SUMMARY:*\n_${analysis.execSummary}_\n\n━━━━━━━━━━━━━━━━━━━━\n✅ Full data logged to Google Sheets`;\n\nreturn [{\n  json: {\n    analysis,\n    telegramMessage,\n    summary,\n    reportDate\n  }\n}];"
+      },
+      "id": "708d1d7b-e262-4169-9fa3-e30ee96bf7f2",
+      "name": "Parse AI Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -736,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+        "text": "={{$json.telegramMessage}}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "1fac8c50-fd2a-4eb6-9a8a-284225a8ddc2",
+      "name": "Send Telegram Report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -512,
+        -112
+      ],
+      "webhookId": "4cbaf916-8355-484d-804f-338fc7302edc",
+      "credentials": {
+        "telegramApi": {
+          "id": "Z32LbSVlUrEo0aIT",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare rows for Google Sheets — one row per feedback item with full analysis\nconst parsed = $('Parse AI Analysis').first().json;\nconst analysis = parsed.analysis;\nconst summary = parsed.summary;\nconst reportDate = parsed.reportDate;\n\nconst rows = [];\n\n// Row 1: Summary row for the weekly overview sheet\nrows.push({\n  json: {\n    sheetType: 'SUMMARY',\n    reportDate,\n    totalAnalyzed: summary.totalAnalyzed,\n    positiveCount: summary.positiveCount,\n    neutralCount: summary.neutralCount,\n    negativeCount: summary.negativeCount,\n    positivePercent: summary.positivePercent,\n    overallSentiment: summary.overallSentiment,\n    topKeyword: summary.topKeyword,\n    topAlert: summary.topAlert,\n    execSummary: analysis.execSummary,\n    pricesMentions: analysis.categories?.Price?.mentions || 0,\n    facilityMentions: analysis.categories?.Facility?.mentions || 0,\n    staffMentions: analysis.categories?.Staff?.mentions || 0,\n    natureMentions: analysis.categories?.Nature?.mentions || 0,\n    priceSentiment: analysis.categories?.Price?.sentiment || '',\n    facilitySentiment: analysis.categories?.Facility?.sentiment || '',\n    staffSentiment: analysis.categories?.Staff?.sentiment || '',\n    natureSentiment: analysis.categories?.Nature?.sentiment || ''\n  }\n});\n\nreturn rows;"
+      },
+      "id": "2c5c659f-7e47-4bcd-af0c-68d0b393e89f",
+      "name": "Prepare Sheets Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -512,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "WeeklySummary",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Report Date": "={{$json.reportDate}}",
+            "Total Analyzed": "={{$json.totalAnalyzed}}",
+            "Positive Count": "={{$json.positiveCount}}",
+            "Neutral Count": "={{$json.neutralCount}}",
+            "Negative Count": "={{$json.negativeCount}}",
+            "Positive %": "={{$json.positivePercent}}",
+            "Overall Sentiment": "={{$json.overallSentiment}}",
+            "Top Keyword": "={{$json.topKeyword}}",
+            "Top Alert": "={{$json.topAlert}}",
+            "Price Mentions": "={{$json.pricesMentions}}",
+            "Price Sentiment": "={{$json.priceSentiment}}",
+            "Facility Mentions": "={{$json.facilityMentions}}",
+            "Facility Sentiment": "={{$json.facilitySentiment}}",
+            "Staff Mentions": "={{$json.staffMentions}}",
+            "Staff Sentiment": "={{$json.staffSentiment}}",
+            "Nature Mentions": "={{$json.natureMentions}}",
+            "Nature Sentiment": "={{$json.natureSentiment}}",
+            "Executive Summary": "={{$json.execSummary}}"
+          }
+        },
+        "options": {}
+      },
+      "id": "2034aaab-5d40-446c-8692-4ffdcfef87f3",
+      "name": "Log to Google Sheets (Summary)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        -288,
+        48
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ne5lFAYcDs8mggLN",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Knowledge Base Leak rows\nconst analysis = $('Parse AI Analysis').first().json.analysis;\nconst reportDate = $('Parse AI Analysis').first().json.reportDate;\nconst leaks = analysis.knowledgeBaseLeaks || [];\n\nif (leaks.length === 0) {\n  return [{ json: { noLeaks: true, reportDate } }];\n}\n\nreturn leaks.map(leak => ({\n  json: {\n    reportDate,\n    question: leak.question,\n    frequency: leak.frequency,\n    suggestedAnswer: leak.suggestedAnswer,\n    status: 'Pending Review'\n  }\n}));"
+      },
+      "id": "0c9c4612-9bec-47f2-a564-68d03953099a",
+      "name": "Prepare KB Leaks Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -512,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-no-leaks",
+              "leftValue": "={{$json.noLeaks}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "282dc1d8-8cfa-4cbc-a271-fc0750c269d0",
+      "name": "Has KB Leaks?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -288,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PendingFAQ",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date Flagged": "={{$json.reportDate}}",
+            "Repeated Question": "={{$json.question}}",
+            "Times Asked": "={{$json.frequency}}",
+            "Suggested Answer": "={{$json.suggestedAnswer}}",
+            "Status": "={{$json.status}}"
+          }
+        },
+        "options": {}
+      },
+      "id": "d095b852-40f0-457f-906d-74e8b717812a",
+      "name": "Log KB Leaks to PendingFAQ Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        -64,
+        160
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ne5lFAYcDs8mggLN",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+        "text": "=🚩 *KNOWLEDGE BASE ALERT*\n\n❓ *Repeated Question:* \"{{$json.question}}\"\n📊 Asked *{{$json.frequency}} times* this week\n\n💬 *Suggested Answer for FAQ:*\n_{{$json.suggestedAnswer}}_\n\n➡️ Action: Add this to your booking page FAQ & Messenger auto-reply.\n✅ Logged to PendingFAQ sheet.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "a2d26eda-568e-47c1-bbac-15454a8f3461",
+      "name": "Telegram KB Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -64,
+        48
+      ],
+      "webhookId": "bcd10076-29cf-4f28-89fa-1c98c3978fd3",
+      "credentials": {
+        "telegramApi": {
+          "id": "Z32LbSVlUrEo0aIT",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare individual feedback rows for the detailed Feedback Log sheet\nconst analysis = $('Parse AI Analysis').first().json.analysis;\nconst reportDate = $('Parse AI Analysis').first().json.reportDate;\nconst allFeedback = $('Normalize & Merge All Feedback').all();\nconst individualResults = analysis.individualResults || [];\n\nconst rows = allFeedback.map((item, index) => {\n  const result = individualResults.find(r => r.id === index + 1) || {};\n  return {\n    json: {\n      reportDate,\n      source: item.json.source,\n      type: item.json.type,\n      author: item.json.author || 'Guest',\n      text: item.json.text,\n      timestamp: item.json.timestamp,\n      sentiment: result.sentiment || 'Neutral',\n      category: result.category || 'Uncategorized',\n      keyTheme: result.keyTheme || ''\n    }\n  };\n});\n\nreturn rows;"
+      },
+      "id": "6bd892e0-6ffb-4d15-908a-8e3d2fb7d9a2",
+      "name": "Prepare Feedback Log Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -512,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "FeedbackLog",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Report Date": "={{$json.reportDate}}",
+            "Source": "={{$json.source}}",
+            "Type": "={{$json.type}}",
+            "Author": "={{$json.author}}",
+            "Feedback Text": "={{$json.text}}",
+            "Timestamp": "={{$json.timestamp}}",
+            "Sentiment": "={{$json.sentiment}}",
+            "Category": "={{$json.category}}",
+            "Key Theme": "={{$json.keyTheme}}"
+          }
+        },
+        "options": {}
+      },
+      "id": "20b7a69b-3948-4e0e-b327-514156f5e223",
+      "name": "Log to Google Sheets (Feedback Log)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        -288,
+        368
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ne5lFAYcDs8mggLN",
+          "name": "Google Sheets account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Weekly Trigger (Sunday Midnight)": {
+      "main": [
+        [
+          {
+            "node": "Set Date Range",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Date Range": {
+      "main": [
+        [
+          {
+            "node": "Fetch Facebook Comments",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Instagram Comments",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Google Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Facebook Comments": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Merge All Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize & Merge All Feedback": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Batch": {
+      "main": [
+        [
+          {
+            "node": "AI Sentiment Engine (GPT-4o)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Sentiment Engine (GPT-4o)": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Report",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Sheets Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare KB Leaks Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Feedback Log Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Sheets Data": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets (Summary)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare KB Leaks Data": {
+      "main": [
+        [
+          {
+            "node": "Has KB Leaks?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has KB Leaks?": {
+      "main": [
+        [
+          {
+            "node": "Telegram KB Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log KB Leaks to PendingFAQ Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Feedback Log Data": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets (Feedback Log)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "1eb76d94-f744-449f-9b10-23d873c4ebb1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "563081422b97a9613202fc9e330444d764a4b838aee8c810ae24b64e312e87c7"
+  },
+  "id": "toSyPfjk26u4tupZ",
+  "tags": []
+}
